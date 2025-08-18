@@ -1,4 +1,3 @@
-# src/data_loader.py
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -35,7 +34,6 @@ def _check_path_health(path: Path):
     size = path.stat().st_size
     if size == 0:
         raise ValueError(f"File is empty: {path}")
-    # Detect Git LFS pointer (tiny text file)
     try:
         head = path.read_bytes()[:256]
         if b"git-lfs" in head and b"oid sha256" in head:
@@ -47,8 +45,6 @@ def _check_path_health(path: Path):
         pass
 
 def _read_any_tabular(obj: Union[str, Path, IO[bytes]]):
-    """Return dict of DataFrames (sheet_name -> df). Supports CSV and Excel.
-       Gives actionable errors for empty/LFS/misnamed files."""
     if isinstance(obj, (str, Path)):
         p = Path(obj)
         _check_path_health(p)
@@ -58,27 +54,23 @@ def _read_any_tabular(obj: Union[str, Path, IO[bytes]]):
         name = getattr(obj, "name", "uploaded").lower()
         handle = obj
 
-    # CSV explicit
     if name.endswith(".csv"):
         df = pd.read_csv(handle)
         if df.shape[1] == 0:
             raise ValueError("CSV has no columns. Is the file empty or corrupted?")
         return {"CSV": df}
 
-    # Excel explicit
     if name.endswith(".xlsx"):
         try:
             return pd.read_excel(handle, sheet_name=None, engine="openpyxl")
         except BadZipFile:
-            # Misnamed CSV/empty file with .xlsx extension
             df = pd.read_csv(handle)
             if df.shape[1] == 0:
-                raise ValueError("File named .xlsx is not a real Excel (and CSV fallback has no columns).")
+                raise ValueError("File named .xlsx is not real Excel (CSV fallback has no columns).")
             return {"CSV": df}
     if name.endswith(".xls"):
         return pd.read_excel(handle, sheet_name=None, engine="xlrd")
 
-    # Unknown: try Excel then CSV
     try:
         return pd.read_excel(handle, sheet_name=None, engine="openpyxl")
     except BadZipFile:
@@ -98,38 +90,42 @@ def load_excel(path_or_buffer: Union[str, Path, IO[bytes]]) -> Tuple[pd.DataFram
     mcol = _find_col(cols, MONTH_COLS)
     dcol = _find_col(cols, DAY_COLS)
 
+    # Build a date from Year/Month[/Day] if no single Date column
     if date_col is None and ycol and mcol:
-        # Coerce month (accept 1-12, "Jan", "January", etc.)
         month_raw = df[mcol].astype(str).str.strip()
         month_map = {
-            "jan":1,"january":1,
-            "feb":2,"february":2,
-            "mar":3,"march":3,
-            "apr":4,"april":4,
-            "may":5,
-            "jun":6,"june":6,
-            "jul":7,"july":7,
-            "aug":8,"august":8,
-            "sep":9,"sept":9,"september":9,
-            "oct":10,"october":10,
-            "nov":11,"november":11,
+            "jan":1,"january":1, "feb":2,"february":2, "mar":3,"march":3, "apr":4,"april":4,
+            "may":5, "jun":6,"june":6, "jul":7,"july":7, "aug":8,"august":8,
+            "sep":9,"sept":9,"september":9, "oct":10,"october":10, "nov":11,"november":11,
             "dec":12,"december":12,
         }
         month_num = pd.to_numeric(month_raw, errors="coerce")
         mask = month_num.isna()
-     if mask.any():
+        if mask.any():
             month_num[mask] = month_raw[mask].str.lower().map(month_map)
 
         year_num = pd.to_numeric(df[ycol], errors="coerce")
-     if dcol and dcol in df:
+        if dcol and dcol in df:
             day_num = pd.to_numeric(df[dcol], errors="coerce").fillna(1)
         else:
             day_num = 1
 
-        # IMPORTANT: pandas expects columns literally named 'year','month','day'
         parts = pd.DataFrame({"year": year_num, "month": month_num, "day": day_num})
         df["__date"] = pd.to_datetime(parts, errors="coerce")
         date_col = "__date"
+    elif date_col is not None:
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+
+    meta = {
+        "date": date_col,
+        "store": _find_col(cols, STORE_COLS),
+        "channel": _find_col(cols, CHANNEL_COLS),
+        "group": _find_col(cols, GROUP_COLS),
+        "item": _find_col(cols, ITEM_COLS),
+        "receipt": _find_col(cols, RECEIPT_COLS),
+        "qty": _find_col(cols, SALES_QTY_COLS),
+        "value": _find_col(cols, SALES_VAL_COLS),
+    }
 
     if meta["qty"] and meta["value"]:
         with np.errstate(divide="ignore", invalid="ignore"):
