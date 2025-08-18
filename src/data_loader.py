@@ -1,6 +1,8 @@
+# src/data_loader.py
 import pandas as pd
 import numpy as np
-from typing import Dict, Tuple, Optional
+from pathlib import Path
+from typing import Dict, Tuple, Optional, Union, IO
 
 DATE_COL_CANDIDATES = ["Date","date","Txn Date","Transaction Date"]
 YEAR_COLS = ["Year","YEAR","year"]
@@ -26,8 +28,32 @@ def _find_col(cols, candidates):
                 return cols[i]
     return None
 
-def load_excel(path: str) -> Tuple[pd.DataFrame, Dict[str, Optional[str]]]:
-    sheets = pd.read_excel(path, sheet_name=None)
+def _read_any_excel(obj: Union[str, Path, IO[bytes]]):
+    """Read Excel/CSV into a dict of DataFrames (like sheet_name=None)."""
+    name = None
+    if isinstance(obj, (str, Path)):
+        name = str(obj)
+    else:
+        name = getattr(obj, "name", "uploaded")
+
+    lower = name.lower()
+    if lower.endswith(".csv"):
+        df = pd.read_csv(obj)
+        return {"CSV": df}
+    if lower.endswith(".xlsx"):
+        # requires openpyxl
+        return pd.read_excel(obj, sheet_name=None, engine="openpyxl")
+    if lower.endswith(".xls"):
+        # requires xlrd (xls only)
+        return pd.read_excel(obj, sheet_name=None, engine="xlrd")
+    # Fallback: try openpyxl first, then default
+    try:
+        return pd.read_excel(obj, sheet_name=None, engine="openpyxl")
+    except Exception:
+        return pd.read_excel(obj, sheet_name=None)
+
+def load_excel(path_or_buffer: Union[str, Path, IO[bytes]]) -> Tuple[pd.DataFrame, Dict[str, Optional[str]]]:
+    sheets = _read_any_excel(path_or_buffer)
     sheet_name = max(sheets, key=lambda k: sheets[k].shape[0])
     df = sheets[sheet_name].copy()
     cols = list(df.columns)
@@ -41,7 +67,7 @@ def load_excel(path: str) -> Tuple[pd.DataFrame, Dict[str, Optional[str]]]:
         d = df[[ycol, mcol]].copy()
         d["__day"] = df[dcol] if dcol and dcol in df else 1
         df["__date"] = pd.to_datetime(
-            d.rename(columns={ycol:"__year", mcol:"__month"})[["__year","__month","__day"]],
+            d.rename(columns={ycol: "__year", mcol: "__month"})[["__year", "__month", "__day"]],
             errors="coerce"
         )
         date_col = "__date"
