@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import Dict, Tuple, Optional, Union, IO
+from zipfile import BadZipFile
 
 DATE_COL_CANDIDATES = ["Date","date","Txn Date","Transaction Date"]
 YEAR_COLS = ["Year","YEAR","year"]
@@ -28,32 +29,45 @@ def _find_col(cols, candidates):
                 return cols[i]
     return None
 
-def _read_any_excel(obj: Union[str, Path, IO[bytes]]):
-    """Read Excel/CSV into a dict of DataFrames (like sheet_name=None)."""
+def _read_any_tabular(obj: Union[str, Path, IO[bytes]]):
+    """Return dict of DataFrames (sheet_name -> df). Supports CSV and Excel.
+       Falls back to CSV if an .xlsx isn't a valid zip container."""
     name = None
     if isinstance(obj, (str, Path)):
         name = str(obj)
+        p = Path(name)
+        if not p.exists():
+            raise FileNotFoundError(f"Path does not exist: {p}")
     else:
         name = getattr(obj, "name", "uploaded")
 
-    lower = name.lower()
+    lower = (name or "").lower()
+
+    # CSV explicit
     if lower.endswith(".csv"):
-        df = pd.read_csv(obj)
-        return {"CSV": df}
+        return {"CSV": pd.read_csv(obj)}
+
+    # Excel explicit by extension
     if lower.endswith(".xlsx"):
-        # requires openpyxl
-        return pd.read_excel(obj, sheet_name=None, engine="openpyxl")
+        try:
+            return pd.read_excel(obj, sheet_name=None, engine="openpyxl")
+        except BadZipFile:
+            # not a real xlsx; try CSV
+            return {"CSV": pd.read_csv(obj)}
     if lower.endswith(".xls"):
-        # requires xlrd (xls only)
         return pd.read_excel(obj, sheet_name=None, engine="xlrd")
-    # Fallback: try openpyxl first, then default
+
+    # Unknown extension: try Excel then CSV
     try:
         return pd.read_excel(obj, sheet_name=None, engine="openpyxl")
+    except BadZipFile:
+        return {"CSV": pd.read_csv(obj)}
     except Exception:
-        return pd.read_excel(obj, sheet_name=None)
+        # Last resort: CSV
+        return {"CSV": pd.read_csv(obj)}
 
 def load_excel(path_or_buffer: Union[str, Path, IO[bytes]]) -> Tuple[pd.DataFrame, Dict[str, Optional[str]]]:
-    sheets = _read_any_excel(path_or_buffer)
+    sheets = _read_any_tabular(path_or_buffer)
     sheet_name = max(sheets, key=lambda k: sheets[k].shape[0])
     df = sheets[sheet_name].copy()
     cols = list(df.columns)
