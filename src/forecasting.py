@@ -1,35 +1,37 @@
 import pandas as pd
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from .models import MODEL_FUNCS, evaluate_forecast, prophet_forecast
 
 def build_series(monthly_df: pd.DataFrame, value_col: str) -> pd.Series:
     ts = monthly_df.set_index("month")[value_col].astype(float).sort_index()
-    # Ensure PeriodIndex monthly
     if not isinstance(ts.index, pd.PeriodIndex):
         ts.index = pd.PeriodIndex(ts.index, freq="M")
     return ts
 
-def fit_and_forecast(ts: pd.Series, horizon: int, models: List[str]) -> Dict[str, pd.Series]:
-    forecasts = {}
+def fit_and_forecast(ts: pd.Series, horizon: int, models: List[str]) -> Tuple[Dict[str, pd.Series], List[str]]:
+    """Return forecasts and a list of notes for any models we skip."""
+    forecasts: Dict[str, pd.Series] = {}
+    notes: List[str] = []
     for name in models:
-        if name == "Prophet":
-            try:
+        try:
+            if name == "Prophet":
                 forecasts[name] = prophet_forecast(ts, horizon)
-            except Exception:
-                continue
-        else:
-            forecasts[name] = MODEL_FUNCS[name](ts, horizon)
-    return forecasts
+            else:
+                forecasts[name] = MODEL_FUNCS[name](ts, horizon)
+        except Exception as e:
+            notes.append(f"{name} skipped: {e}")
+            continue
+    return forecasts, notes
 
 def backtest(ts: pd.Series, horizon: int, models: List[str], folds: int=3) -> Dict[str, Dict[str, float]]:
     metrics = {m: {"rmse":0.0,"mape":0.0,"smape":0.0,"n":0} for m in models}
-    min_train = max(12, len(ts)//2)
+    min_train = max(6, len(ts)//2)   # allow shorter histories
     split_points = [len(ts)-horizon*(i+1) for i in range(folds)][::-1]
     split_points = [s for s in split_points if s > min_train]
     for s in split_points:
         train = ts.iloc[:s]
         test = ts.iloc[s:s+horizon]
-        fc_all = fit_and_forecast(train, horizon, models)
+        fc_all, _ = fit_and_forecast(train, horizon, models)
         for m, fc in fc_all.items():
             met = evaluate_forecast(test, fc)
             for k in ("rmse","mape","smape"):
@@ -41,3 +43,4 @@ def backtest(ts: pd.Series, horizon: int, models: List[str], folds: int=3) -> Di
         for k in ("rmse","mape","smape"):
             metrics[m][k] = metrics[m][k] / n
     return metrics
+
