@@ -135,11 +135,15 @@ with st.expander("Backtest (expanding window)", expanded=False):
         st.warning(f"Backtest skipped: {e}")
 
 # ---- Fit & forecast ----
-try:
-    forecasts = fit_and_forecast(ts, horizon=horizon, models=models)
-except Exception as e:
-    st.error(f"Model error: {e}")
+forecasts, notes = fit_and_forecast(ts, horizon=horizon, models=models)
+
+if notes:
+    st.info(" | ".join(notes))
+
+if not forecasts:  # empty dict
+    st.error("All models failed to run on this selection. Try a longer history or different filters.")
     st.stop()
+
 
 # ---- Plot ----
 fig = plot_actual_forecasts(ts, forecasts)
