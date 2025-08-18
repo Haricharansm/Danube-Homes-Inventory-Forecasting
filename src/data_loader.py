@@ -29,42 +29,63 @@ def _find_col(cols, candidates):
                 return cols[i]
     return None
 
+def _check_path_health(path: Path):
+    if not path.exists():
+        raise FileNotFoundError(f"Path does not exist: {path}")
+    size = path.stat().st_size
+    if size == 0:
+        raise ValueError(f"File is empty: {path}")
+    # Detect Git LFS pointer (tiny text file)
+    try:
+        head = path.read_bytes()[:256]
+        if b"git-lfs" in head and b"oid sha256" in head:
+            raise ValueError(
+                f"'{path.name}' looks like a Git LFS pointer. "
+                "Upload the real file via the uploader or ensure LFS files are fetched on the host."
+            )
+    except Exception:
+        pass
+
 def _read_any_tabular(obj: Union[str, Path, IO[bytes]]):
     """Return dict of DataFrames (sheet_name -> df). Supports CSV and Excel.
-       Falls back to CSV if an .xlsx isn't a valid zip container."""
-    name = None
+       Gives actionable errors for empty/LFS/misnamed files."""
     if isinstance(obj, (str, Path)):
-        name = str(obj)
-        p = Path(name)
-        if not p.exists():
-            raise FileNotFoundError(f"Path does not exist: {p}")
+        p = Path(obj)
+        _check_path_health(p)
+        name = p.name.lower()
+        handle = str(p)
     else:
-        name = getattr(obj, "name", "uploaded")
-
-    lower = (name or "").lower()
+        name = getattr(obj, "name", "uploaded").lower()
+        handle = obj
 
     # CSV explicit
-    if lower.endswith(".csv"):
-        return {"CSV": pd.read_csv(obj)}
+    if name.endswith(".csv"):
+        df = pd.read_csv(handle)
+        if df.shape[1] == 0:
+            raise ValueError("CSV has no columns. Is the file empty or corrupted?")
+        return {"CSV": df}
 
-    # Excel explicit by extension
-    if lower.endswith(".xlsx"):
+    # Excel explicit
+    if name.endswith(".xlsx"):
         try:
-            return pd.read_excel(obj, sheet_name=None, engine="openpyxl")
+            return pd.read_excel(handle, sheet_name=None, engine="openpyxl")
         except BadZipFile:
-            # not a real xlsx; try CSV
-            return {"CSV": pd.read_csv(obj)}
-    if lower.endswith(".xls"):
-        return pd.read_excel(obj, sheet_name=None, engine="xlrd")
+            # Misnamed CSV/empty file with .xlsx extension
+            df = pd.read_csv(handle)
+            if df.shape[1] == 0:
+                raise ValueError("File named .xlsx is not a real Excel (and CSV fallback has no columns).")
+            return {"CSV": df}
+    if name.endswith(".xls"):
+        return pd.read_excel(handle, sheet_name=None, engine="xlrd")
 
-    # Unknown extension: try Excel then CSV
+    # Unknown: try Excel then CSV
     try:
-        return pd.read_excel(obj, sheet_name=None, engine="openpyxl")
+        return pd.read_excel(handle, sheet_name=None, engine="openpyxl")
     except BadZipFile:
-        return {"CSV": pd.read_csv(obj)}
-    except Exception:
-        # Last resort: CSV
-        return {"CSV": pd.read_csv(obj)}
+        df = pd.read_csv(handle)
+        if df.shape[1] == 0:
+            raise ValueError("File is neither valid Excel nor CSV with columns.")
+        return {"CSV": df}
 
 def load_excel(path_or_buffer: Union[str, Path, IO[bytes]]) -> Tuple[pd.DataFrame, Dict[str, Optional[str]]]:
     sheets = _read_any_tabular(path_or_buffer)
