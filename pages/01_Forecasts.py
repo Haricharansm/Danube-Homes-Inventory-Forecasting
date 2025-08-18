@@ -1,7 +1,7 @@
-# pages/forecasts.py
 import streamlit as st
 import pandas as pd
 import numpy as np
+from pathlib import Path
 
 from src.data_loader import load_excel, monthly_aggregate
 from src.forecasting import build_series, fit_and_forecast, backtest
@@ -9,7 +9,7 @@ from src.visualize import plot_actual_forecasts
 
 st.title("📈 Forecasts")
 
-# ---- Runtime capability checks (so the page works on Python 3.13 too) ----
+# ---- Runtime capability checks ----
 have_pmdarima = True
 try:
     import pmdarima  # noqa: F401
@@ -28,34 +28,54 @@ try:
 except Exception:
     have_prophet = False
 
-# ---- Data input -----------------------------------------------------------
+# ---- Data input ----
 default_path = "data/furniture.xlsx"
-data_path = st.text_input(
-    "Excel data path",
-    value=default_path,
-    help="Upload your Excel to data/ or provide an absolute path."
-)
+col1, col2 = st.columns([2, 1], gap="small")
+with col1:
+    data_path = st.text_input(
+        "Excel data path",
+        value=default_path,
+        help="Path inside repo (e.g., data/furniture.xlsx) or absolute path."
+    )
+with col2:
+    uploaded = st.file_uploader("…or upload file", type=["xlsx", "xls", "csv"])
 
-# Load
+if uploaded is None:
+    p = Path(data_path)
+    st.caption(f"Path exists: {p.exists()} | Size: {p.stat().st_size if p.exists() else 'n/a'} bytes")
+
+# ---- Load ----
 try:
-    df, meta = load_excel(data_path)
+    if uploaded is not None:
+        df, meta = load_excel(uploaded)  # file-like buffer
+    else:
+        df, meta = load_excel(data_path)  # string path
 except Exception as e:
     st.error(f"Failed to read file: {e}")
     st.stop()
 
 if not meta["date"] or not meta["value"]:
-    st.error("Could not detect date or sales value columns. Ensure your file has Date or Year/Month and 'Sales Val'.")
+    st.error(
+        "Could not detect a Date (or Year/Month) and a 'Sales Val' column. "
+        "Please check column names or upload a file with these fields."
+    )
     st.stop()
 
-# ---- Filters --------------------------------------------------------------
+# ---- Filters ----
 with st.sidebar:
     st.header("Filters")
     store_sel = "All"
     group_sel = "All"
     if meta["store"]:
-        store_sel = st.selectbox("Store", ["All"] + sorted(df[meta["store"]].dropna().astype(str).unique().tolist()))
+        store_sel = st.selectbox(
+            "Store",
+            ["All"] + sorted(df[meta["store"]].dropna().astype(str).unique().tolist())
+        )
     if meta["group"]:
-        group_sel = st.selectbox("Category/Group", ["All"] + sorted(df[meta["group"]].dropna().astype(str).unique().tolist()))
+        group_sel = st.selectbox(
+            "Category/Group",
+            ["All"] + sorted(df[meta["group"]].dropna().astype(str).unique().tolist())
+        )
 
 mask = pd.Series(True, index=df.index)
 if meta["store"] and store_sel != "All":
@@ -67,13 +87,13 @@ data = df[mask].copy()
 date_col = meta["date"]
 val_col = meta["value"]
 
-# ---- Aggregate monthly ----------------------------------------------------
+# ---- Aggregate monthly ----
 monthly = monthly_aggregate(data, date_col, val_col)
 if monthly.empty:
     st.info("No data after filters.")
     st.stop()
 
-# ---- Controls -------------------------------------------------------------
+# ---- Controls ----
 st.subheader("Modeling controls")
 horizon = st.slider("Forecast horizon (months)", min_value=1, max_value=12, value=3)
 
@@ -87,43 +107,45 @@ use_prophet = st.checkbox("Include Prophet (if installed)", value=False and have
 if use_prophet and have_prophet:
     models.append("Prophet")
 
-# Inform about disabled models
-info_msgs = []
+msgs = []
 if not have_pmdarima:
-    info_msgs.append("AutoARIMA disabled (pmdarima not installed on this runtime).")
+    msgs.append("AutoARIMA disabled (pmdarima not installed).")
 if not have_xgb:
-    info_msgs.append("XGBoost disabled (xgboost not installed).")
+    msgs.append("XGBoost disabled (xgboost not installed).")
 if use_prophet and not have_prophet:
-    info_msgs.append("Prophet selected but not installed; uncheck or add it to requirements.")
-if info_msgs:
-    st.info(" ".join(info_msgs))
+    msgs.append("Prophet selected but not installed.")
+if msgs:
+    st.info(" ".join(msgs))
 
-# ---- Build series & basic info -------------------------------------------
+# ---- Build series ----
 ts = build_series(monthly, val_col)
 st.write(f"History: **{len(ts)} months** | Range: **{ts.index.min()} → {ts.index.max()}**")
 
-# ---- Backtest -------------------------------------------------------------
+# ---- Backtest ----
 with st.expander("Backtest (expanding window)", expanded=False):
     folds = st.slider("Folds", 1, 5, 3)
     try:
         metrics = backtest(ts, horizon=horizon, models=models, folds=folds)
         mdf = pd.DataFrame(metrics).T[["rmse", "mape", "smape"]]
-        st.dataframe(mdf.style.format({"rmse": "{:.0f}", "mape": "{:.2f}%", "smape": "{:.2f}%"}), use_container_width=True)
+        st.dataframe(
+            mdf.style.format({"rmse": "{:.0f}", "mape": "{:.2f}%", "smape": "{:.2f}%"}),
+            use_container_width=True
+        )
     except Exception as e:
         st.warning(f"Backtest skipped: {e}")
 
-# ---- Fit & forecast -------------------------------------------------------
+# ---- Fit & forecast ----
 try:
     forecasts = fit_and_forecast(ts, horizon=horizon, models=models)
 except Exception as e:
     st.error(f"Model error: {e}")
     st.stop()
 
-# ---- Plot -----------------------------------------------------------------
+# ---- Plot ----
 fig = plot_actual_forecasts(ts, forecasts)
 st.pyplot(fig)
 
-# ---- Table + download -----------------------------------------------------
+# ---- Table + download ----
 out = pd.DataFrame({"actual": ts})
 for name, fc in forecasts.items():
     out[name] = fc
