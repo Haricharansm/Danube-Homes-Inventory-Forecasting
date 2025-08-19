@@ -172,11 +172,30 @@ future_tbl = (
        .rename(columns={"index": "month"})
 )
 
-st.markdown("### Forecast table")
-st.dataframe(
-    future_tbl.style.format({c: "{:,.0f}" for c in future_tbl.columns if c != "month"}),
-    use_container_width=True
-)
+future_idx = None
+for fc in forecasts.values():
+    future_idx = fc.index if future_idx is None else future_idx.union(fc.index)
+
+if future_idx is None or len(future_idx) == 0:
+    st.warning("No forecasts produced for this selection. Try a longer history or enable Drift/Holt.")
+else:
+    base = pd.DataFrame(index=future_idx)
+    base["actual"] = ts.reindex(future_idx)  # will be NaN (as expected for future)
+    for name, fc in forecasts.items():
+        base[name] = fc
+
+    future_tbl = base.reset_index().rename(columns={"index": "month"})
+    st.markdown("### Forecast table")
+    st.dataframe(
+        future_tbl.style.format({c: "{:,.0f}" for c in future_tbl.columns if c != "month"}),
+        use_container_width=True
+    )
+    st.download_button(
+        "Download forecasts CSV",
+        data=future_tbl.to_csv(index=False),
+        file_name="forecasts_future.csv",
+        mime="text/csv",
+    )
 
 st.download_button(
     "Download forecasts CSV",
