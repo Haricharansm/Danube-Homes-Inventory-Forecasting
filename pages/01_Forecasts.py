@@ -164,15 +164,34 @@ with st.expander("XGBoost feature importance", expanded=False):
 
 # ---- Table + download ----
 out = pd.DataFrame({"actual": ts})
-for name, fc in forecasts.items():
-    out[name] = fc
-st.dataframe(out.tail(24).fillna(""), use_container_width=True)
+future_idx = pd.period_range(ts.index[-1] + 1, periods=horizon, freq="M")
 
-csv = out.reset_index().rename(columns={"index": "month"})
-csv["month"] = csv["month"].astype(str)
+future_tbl = (
+    out.loc[out.index.isin(future_idx)]
+       .reset_index()
+       .rename(columns={"index": "month"})
+)
+
+st.markdown("### Forecast table")
+st.dataframe(
+    future_tbl.style.format({c: "{:,.0f}" for c in future_tbl.columns if c != "month"}),
+    use_container_width=True
+)
+
 st.download_button(
     "Download forecasts CSV",
-    data=csv.to_csv(index=False),
-    file_name="forecasts.csv",
-    mime="text/csv"
+    data=future_tbl.to_csv(index=False),
+    file_name="forecasts_future.csv",
+    mime="text/csv",
 )
+
+with st.expander("History (actuals)"):
+    hist_tbl = (
+        out.loc[out.index <= ts.index[-1]]
+           .reset_index()
+           .rename(columns={"index": "month"})
+    )
+    st.dataframe(
+        hist_tbl.style.format({c: "{:,.0f}" for c in hist_tbl.columns if c != "month"}),
+        use_container_width=True
+    )
