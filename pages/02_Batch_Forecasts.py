@@ -55,4 +55,5 @@ if run:
             data=out.to_csv(index=False),
             file_name="batch_forecasts.csv",
             mime="text/csv"
+            key="dl_batch_csv",  
         )
