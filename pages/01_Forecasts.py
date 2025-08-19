@@ -106,28 +106,15 @@ c2.metric("3-month total", f"{ts.tail(3).sum():,.0f}")
 c3.metric("Volatility (σ of MoM)", f"{vol:.1f}%")
 # ---- Controls ----
 st.subheader("Modeling controls")
-horizon = st.slider("Forecast horizon (months)", min_value=1, max_value=12, value=3)
+max_h = int(min(12, max(1, len(ts)//2)))
+horizon = st.slider("Forecast horizon (months)", 1, max_h, min(3, max_h), help="Max set by your history length")
 
-models = ["SeasonalNaive"]
-if have_pmdarima:
-    models.append("AutoARIMA")
-if have_xgb:
-    models.append("XGBoost")
+models = ["SeasonalNaive", "Drift", "Holt"]  # add these in step 2
+if have_pmdarima: models.append("AutoARIMA")
+if have_xgb: models.append("XGBoost")
 
 use_prophet = st.checkbox("Include Prophet (if installed)", value=False and have_prophet)
-if use_prophet and have_prophet:
-    models.append("Prophet")
-
-msgs = []
-if not have_pmdarima:
-    msgs.append("AutoARIMA disabled (pmdarima not installed).")
-if not have_xgb:
-    msgs.append("XGBoost disabled (xgboost not installed).")
-if use_prophet and not have_prophet:
-    msgs.append("Prophet selected but not installed.")
-if msgs:
-    st.info(" ".join(msgs))
-
+if use_prophet and have_prophet: models.append("Prophet")
 # ---- Build series ----
 ts = build_series(monthly, val_col)
 st.write(f"History: **{len(ts)} months** | Range: **{ts.index.min()} → {ts.index.max()}**")
