@@ -147,6 +147,21 @@ if not forecasts:  # empty dict
 fig = plot_actual_forecasts(ts, forecasts)
 st.pyplot(fig)
 
+with st.expander("XGBoost feature importance", expanded=False):
+    if "XGBoost" in forecasts:
+        try:
+            from src.models import xgb_importance
+            imp = xgb_importance(ts)
+            if imp is None:
+                st.info("Not enough history to compute importances.")
+            else:
+                st.bar_chart(imp)
+        except Exception as e:
+            st.info(f"Skipped: {e}")
+    else:
+        st.caption("Run XGBoost to see importances.")
+
+
 # ---- Table + download ----
 out = pd.DataFrame({"actual": ts})
 for name, fc in forecasts.items():
