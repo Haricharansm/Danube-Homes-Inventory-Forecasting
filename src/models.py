@@ -8,44 +8,35 @@ from typing import Dict
 # --- Baseline ---
 # --- improve SeasonalNaive for short series ---
 def seasonal_naive(ts: pd.Series, horizon: int) -> pd.Series:
-    if not isinstance(ts.index, pd.PeriodIndex):
-        ts = ts.to_period("M")
-    # use mean of last k when < 12 months to avoid a flat "last value"
+    if not isinstance(ts.index, pd.PeriodIndex): ts = ts.to_period("M")
     if len(ts) >= 12:
         ref = ts.iloc[-12]
     else:
-        k = min(3, len(ts))
-        ref = float(ts.tail(k).mean())
+        ref = float(ts.tail(min(3, len(ts))).mean())  # less flat with short history
     idx = pd.period_range(ts.index[-1] + 1, periods=horizon, freq="M")
-    return pd.Series([ref] * horizon, index=idx)
+    return pd.Series([ref]*horizon, index=idx)
 
 # --- Naive with drift (uses the slope between first & last) ---
 def drift_forecast(ts: pd.Series, horizon: int) -> pd.Series:
-    if not isinstance(ts.index, pd.PeriodIndex):
-        ts = ts.to_period("M")
+    if not isinstance(ts.index, pd.PeriodIndex): ts = ts.to_period("M")
     n = len(ts)
-    if n < 2:
-        return seasonal_naive(ts, horizon)
-    slope = (ts.iloc[-1] - ts.iloc[0]) / max(1, (n - 1))
+    if n < 2: return seasonal_naive(ts, horizon)
+    slope = (ts.iloc[-1] - ts.iloc[0]) / max(1, n-1)
     start = ts.iloc[-1]
-    idx = pd.period_range(ts.index[-1] + 1, periods=horizon, freq="M")
-    vals = [start + slope * (i + 1) for i in range(horizon)]
+    idx = pd.period_range(ts.index[-1]+1, periods=horizon, freq="M")
+    vals = [start + slope*(i+1) for i in range(horizon)]
     return pd.Series(vals, index=idx)
+
 
 # --- Holt’s linear trend (no seasonality; works with short history) ---
 def holt_forecast(ts: pd.Series, horizon: int) -> pd.Series:
     from statsmodels.tsa.holtwinters import ExponentialSmoothing
-    if not isinstance(ts.index, pd.PeriodIndex):
-        ts = ts.to_period("M")
-    y = ts.copy()
-    y.index = y.index.to_timestamp()
-    if len(y) < 4:
-        return drift_forecast(ts, horizon)  # too short for Holt -> use drift
-    model = ExponentialSmoothing(y, trend="add", seasonal=None, damped_trend=True)
-    fit = model.fit(optimized=True, use_brute=True)
+    if not isinstance(ts.index, pd.PeriodIndex): ts = ts.to_period("M")
+    y = ts.copy(); y.index = y.index.to_timestamp()
+    if len(y) < 4: return drift_forecast(ts, horizon)
+    fit = ExponentialSmoothing(y, trend="add", seasonal=None, damped_trend=True).fit(optimized=True, use_brute=True)
     fc = fit.forecast(horizon)
-    out = fc.copy()
-    out.index = pd.PeriodIndex(out.index, freq="M")
+    out = fc.copy(); out.index = pd.PeriodIndex(out.index, freq="M")
     return out
 
 def evaluate_forecast(y_true: pd.Series, y_pred: pd.Series) -> Dict[str, float]:
@@ -171,6 +162,8 @@ def prophet_forecast(ts: pd.Series, horizon: int) -> pd.Series:
 
 MODEL_FUNCS = {
     "SeasonalNaive": seasonal_naive,
+    "Drift": drift_forecast,
+    "Holt": holt_forecast,
     "AutoARIMA": arima_forecast,
     "XGBoost": xgb_forecast,
 }
