@@ -195,6 +195,7 @@ else:
         data=future_tbl.to_csv(index=False),
         file_name="forecasts_future.csv",
         mime="text/csv",
+        key="dl_forecasts_future",
     )
 
 st.download_button(
@@ -202,6 +203,7 @@ st.download_button(
     data=future_tbl.to_csv(index=False),
     file_name="forecasts_future.csv",
     mime="text/csv",
+    key="dl_history_csv", 
 )
 
 with st.expander("History (actuals)"):
