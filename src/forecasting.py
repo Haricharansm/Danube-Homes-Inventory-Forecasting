@@ -1,45 +1,59 @@
+# src/visualize.py
+from typing import Dict, Tuple, Union, Optional
 import pandas as pd
-from typing import Dict, List, Tuple
-from .models import MODEL_FUNCS, evaluate_forecast, prophet_forecast
+import matplotlib.pyplot as plt
 
-def build_series(monthly_df: pd.DataFrame, value_col: str) -> pd.Series:
-    ts = monthly_df.set_index("month")[value_col].astype(float).sort_index()
-    if not isinstance(ts.index, pd.PeriodIndex):
-        ts.index = pd.PeriodIndex(ts.index, freq="M")
-    return ts
+def _to_dt_index(idx):
+    if isinstance(idx, pd.PeriodIndex):
+        return idx.to_timestamp()
+    if isinstance(idx, pd.DatetimeIndex):
+        return idx
+    try:
+        return pd.to_datetime(idx)
+    except Exception:
+        return pd.Index(idx)
 
-def fit_and_forecast(ts: pd.Series, horizon: int, models: List[str]) -> Tuple[Dict[str, pd.Series], List[str]]:
-    forecasts: Dict[str, pd.Series] = {}
-    notes: List[str] = []
-    for name in models:
-        try:
-            fc = prophet_forecast(ts, horizon) if name == "Prophet" else MODEL_FUNCS[name](ts, horizon)
-            if fc is None or not isinstance(fc, pd.Series) or fc.dropna().empty:
-                notes.append(f"{name} produced no forecast; skipped.")
-                continue
-            forecasts[name] = fc
-        except Exception as e:
-            notes.append(f"{name} skipped: {e}")
-    return forecasts, notes
+def _prepare(s: Optional[pd.Series]) -> Optional[pd.Series]:
+    """Return a safe copy with a datetime-like index, or None if unusable."""
+    if s is None or not isinstance(s, pd.Series):
+        return None
+    if s.empty or s.dropna().empty:
+        return None
+    s2 = s.copy()
+    s2.index = _to_dt_index(s2.index)
+    return s2
 
-def backtest(ts: pd.Series, horizon: int, models: List[str], folds: int=3) -> Dict[str, Dict[str, float]]:
-    metrics = {m: {"rmse":0.0,"mape":0.0,"smape":0.0,"n":0} for m in models}
-    min_train = max(6, len(ts)//2)   # allow shorter histories
-    split_points = [len(ts)-horizon*(i+1) for i in range(folds)][::-1]
-    split_points = [s for s in split_points if s > min_train]
-    for s in split_points:
-        train = ts.iloc[:s]
-        test = ts.iloc[s:s+horizon]
-        fc_all, _ = fit_and_forecast(train, horizon, models)
-        for m, fc in fc_all.items():
-            met = evaluate_forecast(test, fc)
-            for k in ("rmse","mape","smape"):
-                if pd.notna(met[k]):
-                    metrics[m][k] += met[k]
-            metrics[m]["n"] += 1
-    for m in models:
-        n = max(1, metrics[m]["n"])
-        for k in ("rmse","mape","smape"):
-            metrics[m][k] = metrics[m][k] / n
-    return metrics
+def plot_actual_forecasts(
+    ts: Optional[pd.Series],
+    forecasts: Union[Dict[str, Optional[pd.Series]], Tuple[Dict[str, Optional[pd.Series]], list]],
+    title: str = "Actual vs Forecast",
+):
+    # Allow (forecasts_dict, notes) tuples
+    if isinstance(forecasts, tuple) and len(forecasts) > 0 and isinstance(forecasts[0], dict):
+        forecasts = forecasts[0]
+    forecasts = forecasts or {}
 
+    ts_p = _prepare(ts)
+
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    if ts_p is not None:
+        ax.plot(ts_p.index, ts_p.values, marker="o", linewidth=2, label="Actual")
+
+    plotted = False
+    for name, fc in forecasts.items():
+        fc_p = _prepare(fc)
+        if fc_p is None:
+            continue
+        ax.plot(fc_p.index, fc_p.values, linestyle="--", marker="o", label=name)
+        plotted = True
+
+    if not plotted and ts_p is None:
+        ax.text(0.5, 0.5, "No data available", ha="center", va="center", transform=ax.transAxes)
+
+    ax.set_title(title)
+    ax.set_xlabel("Month")
+    ax.set_ylabel(getattr(ts, "name", "Value") or "Value")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    return fig
