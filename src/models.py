@@ -132,6 +132,40 @@ def xgb_forecast(ts: pd.Series, horizon: int) -> pd.Series:
     )
     model.fit(X, y)
 
+def xgb_importance(ts: pd.Series):
+    """Return a Series of XGBoost feature importances, or None if unavailable/too short."""
+    try:
+        from xgboost import XGBRegressor
+    except Exception:
+        return None
+
+    if not isinstance(ts.index, pd.PeriodIndex):
+        ts = ts.to_period("M")
+
+    # only use lags that actually exist
+    lags = [l for l in (1, 2, 3, 6, 12) if l < len(ts)]
+    if not lags:
+        return None
+
+    df = pd.DataFrame({"y": ts})
+    for l in lags:
+        df[f"lag_{l}"] = ts.shift(l)
+    df["month_num"] = ts.index.month
+    df["year"] = ts.index.year
+    df = df.dropna()
+    if len(df) < 3:
+        return None
+
+    X = df[[f"lag_{l}" for l in lags] + ["month_num", "year"]]
+    y = df["y"].values
+
+    model = XGBRegressor(
+        n_estimators=400, max_depth=4, learning_rate=0.05,
+        subsample=0.9, colsample_bytree=0.8, random_state=42
+    )
+    model.fit(X, y)
+    return pd.Series(model.feature_importances_, index=X.columns).sort_values(ascending=False)
+
     # recursive forecast with same feature order
     history = df.copy()
     preds = []
