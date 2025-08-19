@@ -94,7 +94,16 @@ monthly = monthly_aggregate(data, date_col, val_col)
 if monthly.empty:
     st.info("No data after filters.")
     st.stop()
+ts = build_series(monthly, val_col)
+last = float(ts.iloc[-1])
+prev = float(ts.iloc[-2]) if len(ts) >= 2 else last
+delta = (last - prev) / prev * 100 if prev != 0 else 0
+vol = float(ts.pct_change().dropna().std() * 100) if len(ts) > 2 else 0
 
+c1, c2, c3 = st.columns(3)
+c1.metric("Last month", f"{last:,.0f}", f"{delta:+.1f}% vs prev")
+c2.metric("3-month total", f"{ts.tail(3).sum():,.0f}")
+c3.metric("Volatility (σ of MoM)", f"{vol:.1f}%")
 # ---- Controls ----
 st.subheader("Modeling controls")
 horizon = st.slider("Forecast horizon (months)", min_value=1, max_value=12, value=3)
