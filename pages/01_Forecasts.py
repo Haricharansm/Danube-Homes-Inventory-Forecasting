@@ -153,13 +153,13 @@ with st.expander("XGBoost feature importance", expanded=False):
             from src.models import xgb_importance
             imp = xgb_importance(ts)
             if imp is None:
-                st.info("Not enough history to compute importances.")
+                st.caption("Not enough history or XGBoost not available.")
             else:
                 st.bar_chart(imp)
         except Exception as e:
-            st.info(f"Skipped: {e}")
+            st.caption(f"Skipped: {e}")
     else:
-        st.caption("Run XGBoost to see importances.")
+        st.caption("Run XGBoost to view importances.")
 
 
 # ---- Table + download ----
