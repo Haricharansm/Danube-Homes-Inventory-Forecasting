@@ -9,18 +9,17 @@ def build_series(monthly_df: pd.DataFrame, value_col: str) -> pd.Series:
     return ts
 
 def fit_and_forecast(ts: pd.Series, horizon: int, models: List[str]) -> Tuple[Dict[str, pd.Series], List[str]]:
-    """Return forecasts and a list of notes for any models we skip."""
     forecasts: Dict[str, pd.Series] = {}
     notes: List[str] = []
     for name in models:
         try:
-            if name == "Prophet":
-                forecasts[name] = prophet_forecast(ts, horizon)
-            else:
-                forecasts[name] = MODEL_FUNCS[name](ts, horizon)
+            fc = prophet_forecast(ts, horizon) if name == "Prophet" else MODEL_FUNCS[name](ts, horizon)
+            if fc is None or not isinstance(fc, pd.Series) or fc.dropna().empty:
+                notes.append(f"{name} produced no forecast; skipped.")
+                continue
+            forecasts[name] = fc
         except Exception as e:
             notes.append(f"{name} skipped: {e}")
-            continue
     return forecasts, notes
 
 def backtest(ts: pd.Series, horizon: int, models: List[str], folds: int=3) -> Dict[str, Dict[str, float]]:
