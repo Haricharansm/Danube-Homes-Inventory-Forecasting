@@ -86,19 +86,24 @@ def arima_forecast(ts: pd.Series, horizon: int, seasonal: bool=True, m: int=12) 
     return pd.Series(fc, index=idx)
 
 # --- XGBoost with adaptive lags ---
-def xgb_forecast(ts: pd.Series, horizon: int) -> pd.Series:
+def xgb_importance(ts: pd.Series):
     from xgboost import XGBRegressor
-
-    # Ensure monthly PeriodIndex
-    if not isinstance(ts.index, pd.PeriodIndex):
-        ts = ts.to_period("M")
-
-    # Choose only lags that exist
-    default_lags = [1, 2, 3, 6, 12]
+    if not isinstance(ts.index, pd.PeriodIndex): ts = ts.to_period("M")
+    default_lags = [1,2,3,6,12]
     lags = [l for l in default_lags if l < len(ts)]
-    if len(lags) == 0:
-        # Not enough points to train anything — fallback to naive
-        return seasonal_naive(ts, horizon)
+    if len(lags)==0: return None
+
+    df = pd.DataFrame({"y": ts})
+    for l in lags: df[f"lag_{l}"] = ts.shift(l)
+    df["month_num"] = ts.index.month; df["year"] = ts.index.year
+    df = df.dropna()
+    if df.shape[0] < 3: return None
+    y = df["y"].values; X = df.drop(columns=["y"])
+    model = XGBRegressor(n_estimators=400, max_depth=4, learning_rate=0.05,
+                         subsample=0.9, colsample_bytree=0.8, random_state=42)
+    model.fit(X, y)
+    return pd.Series(model.feature_importances_, index=X.columns).sort_values(ascending=False)
+
 
     # Build training frame
     df = pd.DataFrame({"y": ts})
