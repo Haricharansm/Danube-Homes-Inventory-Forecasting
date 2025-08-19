@@ -6,16 +6,47 @@ import pandas as pd
 from typing import Dict
 
 # --- Baseline ---
+# --- improve SeasonalNaive for short series ---
 def seasonal_naive(ts: pd.Series, horizon: int) -> pd.Series:
-    # Expect monthly PeriodIndex; convert if needed
     if not isinstance(ts.index, pd.PeriodIndex):
         ts = ts.to_period("M")
+    # use mean of last k when < 12 months to avoid a flat "last value"
     if len(ts) >= 12:
-        ref = ts.iloc[-12]  # same month last year
+        ref = ts.iloc[-12]
     else:
-        ref = ts.iloc[-1]   # fallback: last observed value
+        k = min(3, len(ts))
+        ref = float(ts.tail(k).mean())
     idx = pd.period_range(ts.index[-1] + 1, periods=horizon, freq="M")
     return pd.Series([ref] * horizon, index=idx)
+
+# --- Naive with drift (uses the slope between first & last) ---
+def drift_forecast(ts: pd.Series, horizon: int) -> pd.Series:
+    if not isinstance(ts.index, pd.PeriodIndex):
+        ts = ts.to_period("M")
+    n = len(ts)
+    if n < 2:
+        return seasonal_naive(ts, horizon)
+    slope = (ts.iloc[-1] - ts.iloc[0]) / max(1, (n - 1))
+    start = ts.iloc[-1]
+    idx = pd.period_range(ts.index[-1] + 1, periods=horizon, freq="M")
+    vals = [start + slope * (i + 1) for i in range(horizon)]
+    return pd.Series(vals, index=idx)
+
+# --- Holt’s linear trend (no seasonality; works with short history) ---
+def holt_forecast(ts: pd.Series, horizon: int) -> pd.Series:
+    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+    if not isinstance(ts.index, pd.PeriodIndex):
+        ts = ts.to_period("M")
+    y = ts.copy()
+    y.index = y.index.to_timestamp()
+    if len(y) < 4:
+        return drift_forecast(ts, horizon)  # too short for Holt -> use drift
+    model = ExponentialSmoothing(y, trend="add", seasonal=None, damped_trend=True)
+    fit = model.fit(optimized=True, use_brute=True)
+    fc = fit.forecast(horizon)
+    out = fc.copy()
+    out.index = pd.PeriodIndex(out.index, freq="M")
+    return out
 
 def evaluate_forecast(y_true: pd.Series, y_pred: pd.Series) -> Dict[str, float]:
     y_true, y_pred = y_true.align(y_pred, join="inner")
