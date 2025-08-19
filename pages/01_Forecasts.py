@@ -7,6 +7,15 @@ from src.data_loader import load_excel, monthly_aggregate
 from src.forecasting import build_series, fit_and_forecast, backtest
 from src.visualize import plot_actual_forecasts
 
+@st.cache_data(show_spinner=False)
+def _cached_load(path_text: str, upload_bytes: bytes | None):
+    from io import BytesIO
+    if upload_bytes is not None:
+        buf = BytesIO(upload_bytes)
+        return load_excel(buf)
+    else:
+        return load_excel(path_text)
+
 st.title("📈 Forecasts")
 
 # ---- Runtime capability checks ----
@@ -47,20 +56,13 @@ if uploaded is None:
 # ---- Load ----
 try:
     if uploaded is not None:
-        df, meta = load_excel(uploaded)  # file-like buffer
+        df, meta = _cached_load(data_path, uploaded.getvalue())
     else:
-        df, meta = load_excel(data_path)  # string path
+        df, meta = _cached_load(data_path, None)
 except Exception as e:
     st.error(f"Failed to read file: {e}")
     st.stop()
-
-if not meta["date"] or not meta["value"]:
-    st.error(
-        "Could not detect a Date (or Year/Month) and a 'Sales Val' column. "
-        "Please check column names or upload a file with these fields."
-    )
-    st.stop()
-
+    
 # ---- Filters ----
 with st.sidebar:
     st.header("Filters")
